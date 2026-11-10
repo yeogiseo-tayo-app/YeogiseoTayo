@@ -147,9 +147,13 @@ document.querySelectorAll("#spots button").forEach((b) => b.addEventListener("cl
 markSpot();
 update(tripRef("rider"), { joinedAt: serverTimestamp(), demo: DEMO, ...(DEMO ? { pos: { ...DEMO_POS, acc: 0, at: Date.now() } } : {}) });
 
+let watchId = null;
+function finished() { const p = st.status?.phase; return p === "PICKED_UP" || !!st.info?.ended; }
+function stopSharing() { if (watchId !== null) { try { navigator.geolocation.clearWatch(watchId); } catch (e) {} watchId = null; } }
 if (!DEMO && "geolocation" in navigator) {
   let lastSent = 0;
-  navigator.geolocation.watchPosition((p) => {
+  watchId = navigator.geolocation.watchPosition((p) => {
+    if (finished()) return;
     st.me = { lat: p.coords.latitude, lon: p.coords.longitude };
     draw();
     if (Date.now() - lastSent > 5000) {
@@ -177,7 +181,7 @@ $("go").addEventListener("click", () => {
 });
 
 // ---------- 차가 쓴 값 듣기 ----------
-onValue(tripRef("info"), (s) => { st.info = s.val(); render(); });
+onValue(tripRef("info"), (s) => { st.info = s.val(); if (finished()) stopSharing(); render(); draw(); });
 onValue(tripRef("meet"), (s) => {
   const m = s.val();
   const key = m ? `${m.lat.toFixed(6)},${m.lon.toFixed(6)}` : null;
@@ -187,7 +191,7 @@ onValue(tripRef("meet"), (s) => {
   if (key !== st.lastMeetKey) userMoved = false;   // 새 장소는 다시 보여 줌
   st.lastMeetKey = key; st.meet = m; render(); draw();
 });
-onValue(tripRef("status"), (s) => { st.status = s.val(); st.statusAt = Date.now(); render(); renderNeeds(); });
+onValue(tripRef("status"), (s) => { st.status = s.val(); st.statusAt = Date.now(); if (finished()) stopSharing(); render(); renderNeeds(); });
 onValue(tripRef("car"), (s) => { st.car = s.val(); draw(); });
 onValue(tripRef("rider"), (s) => {   // "처음으로"로 차가 지운 값도 따라가게
   const r = s.val() || {};
@@ -239,7 +243,9 @@ function render() {
   } else if (s.phase === "ARRIVED") {
     hero.className = "hero arrived"; title = "차가 도착했어요"; sub = `${m.landmark ? m.landmark + " 앞" : m.name}에서 기다리고 있어요`;
   } else {
-    hero.className = "hero arrived"; title = "탑승 완료"; sub = st.info?.destinationLabel ? `${ro(st.info.destinationLabel)} 출발했어요` : "출발했어요";
+    hero.className = "hero arrived"; title = "탑승 완료";
+    sub = (st.info?.destinationLabel ? `${ro(st.info.destinationLabel)} 출발했어요. ` : "출발했어요. ") +
+      (st.info?.ended ? "위치 공유를 끝내고 기록을 지웠어요." : "위치 공유는 곧 끝나요.");
   }
   $("heroTitle").textContent = title;
   $("heroSub").textContent = sub;

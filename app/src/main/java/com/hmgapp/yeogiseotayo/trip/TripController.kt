@@ -46,6 +46,9 @@ data class TripState(
     /** 차가 한 번이라도 움직여 진행 방향을 알게 됐는가 (멈춘 채 켜면 모름) */
     val headingKnown: Boolean = false,
     val speedMps: Double = 0.0,
+    /** 차량이 알려 준 차속(m/s)·기어("P","D"…). 없으면 null → GPS 로만 판단 */
+    val vehicleSpeedMps: Double? = null,
+    val gear: String? = null,
     val rider: Place,
     val destination: Place?,
     val needs: Set<Need> = emptySet(),
@@ -63,7 +66,9 @@ data class TripState(
     val log: List<String> = emptyList(),
 ) {
     /** 주행 중이면 화면 조작을 숨긴다 (시속 약 7km 이상) */
-    val moving: Boolean get() = speedMps > 2.0
+    /** GPS 추정과 차량 차속 중 큰 값 (에뮬레이터 GPX 재생 중에는 차량 차속이 0일 수 있어서) */
+    val effSpeedMps: Double get() = maxOf(speedMps, vehicleSpeedMps ?: 0.0)
+    val moving: Boolean get() = effSpeedMps > 2.0
 }
 
 /**
@@ -87,6 +92,10 @@ class TripController(
     private var lastFix: Pair<LatLng, Long>? = null
     private var stoppedSince: Long? = null
     private var movingSince: Long? = null
+    /** 기어가 P 인데 GPS 로는 달리고 있음 = 기어 신호를 믿을 수 없음 (에뮬레이터 GPX 재생: 기어는 P 그대로) */
+    private var gearConflict = 0
+    private val gearTrusted get() = gearConflict < 3
+    private val parked get() = gearTrusted && state.gear == "P"
 
     companion object {
         const val COME_OUT_MARGIN_SEC = 60.0   // 나올 시각 = 도착 예정 − 걷는 시간 − 1분
@@ -201,6 +210,10 @@ class TripController(
             speed = 0.6 * inst + 0.4 * state.speedMps
             if (d > 2.0) { heading = Geo.bearing(prev.first, pos); known = true }
         }
+        if (state.gear == "P" && speed > DEPART_MPS && gearConflict < 3) {
+            gearConflict++
+            if (gearConflict == 3) log("기어는 P 인데 위치는 움직여서, 기어 신호는 빼고 위치로만 판단해요 (에뮬레이터 경로 재생)")
+        }
         lastFix = pos to timeMs
         emit(state.copy(car = pos, carHeadingDeg = heading, headingKnown = known, speedMps = speed))
 
@@ -225,6 +238,16 @@ class TripController(
         val walk = state.realWalkSec ?: c.walkSec
         val callOut = eta?.let { it - walk - COME_OUT_MARGIN_SEC }
         emit(state.copy(etaSec = eta, callOutInSec = callOut))
+    }
+
+    /** 차량 신호 (차속·기어). 차가 서 있으면 위치가 안 바뀌어도 여기서 도착·출발을 판단 */
+    fun onVehicle(speedMps: Double?, gear: String?, timeMs: Long = clock()) {
+        emit(state.copy(vehicleSpeedMps = speedMps, gear = gear))
+        when (state.phase) {
+            Phase.GUIDING -> checkArrival(timeMs)
+            Phase.ARRIVED -> checkDeparture(timeMs)
+            else -> Unit
+        }
     }
 
     /**
@@ -256,9 +279,10 @@ class TripController(
         val c = state.chosen ?: return
         val car = state.car ?: return
         val near = Geo.dist(car, c.curb) <= ARRIVE_RADIUS_M
-        if (near && state.speedMps <= STOPPED_MPS) {
+        if (near && state.effSpeedMps <= STOPPED_MPS) {
             val since = stoppedSince ?: now.also { stoppedSince = it }
-            if (now - since >= STOP_HOLD_MS) {
+            // 기어 P 면 섰다는 게 확실하므로 기다리지 않는다
+            if (parked || now - since >= STOP_HOLD_MS) {
                 stoppedSince = null
                 emit(state.copy(phase = Phase.ARRIVED, etaSec = 0.0))
                 riderPort.carArrived(c)
@@ -268,7 +292,8 @@ class TripController(
     }
 
     private fun checkDeparture(now: Long) {
-        if (state.speedMps >= DEPART_MPS) {
+        if (parked) { movingSince = null; return }   // P 인 동안은 출발이 아님
+        if (state.effSpeedMps >= DEPART_MPS) {
             val since = movingSince ?: now.also { movingSince = it }
             if (now - since >= STOP_HOLD_MS) {
                 movingSince = null
@@ -283,6 +308,7 @@ class TripController(
         if (state.phase == Phase.GUIDING || state.phase == Phase.ARRIVED) navi.removePickupWaypoint()
         stoppedSince = null; movingSince = null
         emit(TripState(rider = state.rider, destination = state.destination, car = state.car,
-            carHeadingDeg = state.carHeadingDeg, speedMps = state.speedMps, log = state.log + "처음으로"))
+            carHeadingDeg = state.carHeadingDeg, headingKnown = state.headingKnown, speedMps = state.speedMps,
+            vehicleSpeedMps = state.vehicleSpeedMps, gear = state.gear, log = state.log + "처음으로"))
     }
 }

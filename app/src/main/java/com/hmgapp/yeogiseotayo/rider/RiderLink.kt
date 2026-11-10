@@ -55,6 +55,9 @@ class RiderLink(
     val tripId: String = newId()
     private val base get() = "$dbUrl/trips/$tripId"
     private val io = Executors.newSingleThreadExecutor()
+    private val later = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var cleanup: java.util.concurrent.ScheduledFuture<*>? = null
+    private var lastPhase: String? = null
     @Volatile private var running = true
     @Volatile var lastRider = RiderInfo(); private set
 
@@ -73,14 +76,31 @@ class RiderLink(
         Thread(::listen, "rider-listen").apply { isDaemon = true }.start()
     }
 
-    fun stop() { running = false; io.shutdown() }
+    fun stop() { running = false; io.shutdown(); later.shutdownNow() }
+
+    /**
+     * 탑승 1분 뒤 위치 기록을 지운다 (기획서·문서의 약속: "이번 만남 동안만 공유, 탑승하면 끝, 위치 기록을 남기지 않음").
+     * 차 위치·타는 사람 위치·걷는 길을 지우고 info.ended 를 남겨 웹이 "끝난 만남"으로 보이게 한다.
+     */
+    private fun scheduleCleanup() {
+        cleanup?.cancel(false)
+        cleanup = later.schedule({
+            io.execute {
+                val ok = send("PATCH", "$base.json", JSONObject()
+                    .put("car", JSONObject.NULL).put("rider/pos", JSONObject.NULL)
+                    .put("meet/walkPath", JSONObject.NULL).put("info/ended", System.currentTimeMillis()).toString())
+                if (ok) log("탑승 1분이 지나 위치 기록을 지웠어요")
+            }
+        }, CLEANUP_AFTER_SEC, java.util.concurrent.TimeUnit.SECONDS)
+    }
 
     /** "처음으로": 같은 링크를 그대로 쓰되 사정·출발·만남 장소는 지운다 */
     fun resetTrip() {
+        cleanup?.cancel(false); cleanup = null; lastPhase = null
         meetKey = null; statusKey = null
         lastRider = lastRider.copy(needs = emptySet(), walking = false)
         io.execute {
-            send("PATCH", "$base.json", JSONObject().put("meet", JSONObject.NULL).put("notice", JSONObject.NULL)
+            send("PATCH", "$base.json", JSONObject().put("meet", JSONObject.NULL).put("notice", JSONObject.NULL).put("info/ended", JSONObject.NULL)
                 .put("rider/walking", false).put("rider/needs", JSONObject.NULL).toString())
         }
     }
@@ -97,6 +117,10 @@ class RiderLink(
             meetKey = mk
             patch.put("meet", c?.let { meetJson(it, s) } ?: JSONObject.NULL)
             walkAfter = c != null
+        }
+        if (s.phase.name != lastPhase) {
+            if (s.phase.name == "PICKED_UP") scheduleCleanup()
+            lastPhase = s.phase.name
         }
         val call = s.callOutInSec?.roundToInt()
         val eta = s.etaSec?.roundToInt()
@@ -350,6 +374,7 @@ class RiderLink(
     }
 
     companion object {
+        const val CLEANUP_AFTER_SEC = 60L
         private const val ABC = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         /** 링크를 아는 사람만 열 수 있게 길고 무작위로 (DB 규칙: 16자 이상) */
         fun newId(): String { val r = SecureRandom(); return (1..20).map { ABC[r.nextInt(ABC.length)] }.joinToString("") }

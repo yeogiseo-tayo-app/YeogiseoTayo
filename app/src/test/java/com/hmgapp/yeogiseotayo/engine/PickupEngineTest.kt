@@ -132,7 +132,10 @@ class PickupEngineTest {
             PickupRequest(car = LatLng(37.51300, 126.93300), carHeadingDeg = 85.0, rider = LatLng(37.51385, 126.94255))
         )
         val best = assertNotNullAndGet(r.best)
-        (listOf(best) + r.alternatives).forEach { assertTrue(map.noStopZoneAt(it.curb) == null) }
+        (listOf(best) + r.alternatives).filter { it.kind == CandidateKind.CURB }
+            .forEach { assertTrue(map.noStopZoneAt(it.curb) == null) }
+        // 11/10 로드뷰: 역 앞 노량진로 길가가 모두 정차 불가 → 바로 옆 공영주차장 안에서 태운다
+        assertTrue(best.kind == CandidateKind.OFF_ROAD && best.placeName.contains("공영주차장"))
         println("가드레일 반영 후(목적지 없음): ${best.summary()} @ ${"%.6f,%.6f".format(best.curb.lat, best.curb.lon)}")
         r.alternatives.forEach { println("  대안: ${it.summary()} @ ${"%.6f,%.6f".format(it.curb.lat, it.curb.lon)}") }
     }

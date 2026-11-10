@@ -61,6 +61,58 @@ class TripControllerTest {
         println(f.events.joinToString("\n"))
     }
 
+    @Test fun 기어_P_면_바로_도착이고_P_인_동안은_출발이_아님() {
+        val f = Fakes()
+        var t = 0L
+        val tc = TripController(map(), f, f, f, Place("엄마", at(900.0, -25.0)), null, clock = { t })
+        tc.onLocation(at(100.0, -3.0), 90.0, t)
+        tc.decide()
+        val target = Geo.toXY(tc.state.chosen!!.curb, origin).first
+        var x = 100.0
+        while (x < target) { t += 1000; x = minOf(target, x + 7.0); tc.onLocation(at(x, -6.4), 90.0, t) }
+        // GPS 로는 아직 멈춘 지 1초도 안 됐지만 차량이 기어 P · 차속 0 을 알림
+        t += 400; tc.onVehicle(0.0, "D", t)
+        t += 400; tc.onLocation(at(target, -6.4), 90.0, t)
+        t += 400; tc.onLocation(at(target, -6.4), 90.0, t)
+        assertTrue("아직 3초가 안 지나 도착 아님(GPS 추정 속도도 남아 있음)", tc.state.phase == Phase.GUIDING)
+        repeat(3) { t += 1000; tc.onLocation(at(target, -6.4), 90.0, t) }
+        tc.onVehicle(0.0, "P", t)
+        assertEquals(Phase.ARRIVED, tc.state.phase)
+        // P 인 동안은 GPS 가 튀어도 출발로 보지 않음
+        repeat(5) { t += 1000; x += 8.0; tc.onLocation(at(x, -3.0), 90.0, t) }
+        assertEquals("P 이면 출발 아님", Phase.ARRIVED, tc.state.phase)
+        tc.onVehicle(0.0, "D", t)
+        repeat(5) { t += 1000; x += 8.0; tc.onLocation(at(x, -3.0), 90.0, t) }
+        assertEquals(Phase.PICKED_UP, tc.state.phase)
+    }
+
+    @Test fun 기어가_P_로_고정된_채_위치만_움직이면_기어를_무시한다() {
+        // 에뮬레이터: GPX 를 재생해도 기어는 P 그대로 → 출발을 영영 못 하면 안 됨
+        val f = Fakes()
+        var t = 0L
+        val tc = TripController(map(), f, f, f, Place("엄마", at(900.0, -25.0)), null, clock = { t })
+        tc.onVehicle(0.0, "P", t)
+        tc.onLocation(at(100.0, -3.0), 90.0, t)
+        tc.decide()
+        val target = Geo.toXY(tc.state.chosen!!.curb, origin).first
+        var x = 100.0
+        while (x < target) { t += 1000; x = minOf(target, x + 7.0); tc.onLocation(at(x, -6.4), 90.0, t) }
+        repeat(5) { t += 1000; tc.onLocation(at(target, -6.4), 90.0, t) }
+        assertEquals(Phase.ARRIVED, tc.state.phase)
+        repeat(6) { t += 1000; x += 8.0; tc.onLocation(at(x, -3.0), 90.0, t) }
+        assertEquals(Phase.PICKED_UP, tc.state.phase)
+    }
+
+    @Test fun 차량_차속이_있으면_GPS_가_멈춰도_주행_중으로_본다() {
+        val f = Fakes()
+        val tc = TripController(map(), f, f, f, Place("엄마", at(900.0, -25.0)), null, clock = { 0L })
+        tc.onLocation(at(100.0, -3.0), 90.0, 0L)
+        tc.onVehicle(12.0, "D", 0L)
+        assertTrue(tc.state.moving)
+        tc.onVehicle(0.0, "D", 0L)
+        assertTrue(!tc.state.moving)
+    }
+
     @Test fun 걷기_시작_전에는_사정이_바뀌면_다시_정하고_후에는_고정() {
         val f = Fakes()
         val tc = TripController(map(), f, f, f, Place("엄마", at(600.0, 25.0)), null, clock = { 0L })

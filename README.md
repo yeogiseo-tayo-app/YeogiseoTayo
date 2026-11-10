@@ -30,7 +30,7 @@
 
 | 장면 | GPX | 휴대폰 시연 위치 | 보여 주는 것 |
 | --- | --- | --- | --- |
-| A | `noryangjin_westbound_meet.gpx` | 노량진역 1번 출구 | 가는 길에 태우기: 경유지 → 지금 나오세요 → 도착 → 출발 |
+| A | `noryangjin_station_parking.gpx` | 노량진역 1번 출구 | 역 앞 길가가 모두 정차 불가(로드뷰 확인) → 바로 옆 노량진 공영주차장 안에서 태우기: 경유지 → 지금 나오세요 → 도착 → 출발 |
 | B | `noryangjin_cheongsa_parking.gpx` | 대성학원 앞 | 사정 버튼: "걷기 힘들어요"로 장소·경유지가 바뀜 |
 | C | `noryangjin_cheongsa_parking.gpx` | 노량진 청사(AI디지털배움터) | 길가가 모두 금지일 때 도로 밖(주차장 현관 앞)에서 태우기 |
 

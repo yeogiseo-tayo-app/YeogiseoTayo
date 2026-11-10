@@ -65,6 +65,7 @@ import com.hmgapp.yeogiseotayo.trip.TripController
 import com.hmgapp.yeogiseotayo.trip.TripState
 import com.hmgapp.yeogiseotayo.ui.MapCanvas
 import com.hmgapp.yeogiseotayo.ui.MapColors
+import com.hmgapp.yeogiseotayo.vehicle.VehicleLink
 import com.hmgapp.yeogiseotayo.voice.VoiceLink
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var location: CarLocation
     private var trip: TripController? = null
     private lateinit var riderLink: RiderLink
+    private lateinit var vehicle: VehicleLink
 
     private fun log(msg: String) { main.post { logs.add("${fmt.format(Date())}  $msg"); if (logs.size > 60) logs.removeAt(0) } }
 
@@ -116,11 +118,14 @@ class MainActivity : ComponentActivity() {
     private val locationPermissions = arrayOf(
         "pleos.car.permission.FUSED_LOCATION",
         Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION,
+        // 차속·기어 (차량 속성) — 없으면 GPS 로만 판단
+        "android.car.permission.CAR_SPEED", "android.car.permission.CAR_POWERTRAIN",
     )
     private fun hasLocationPermission() =
         ContextCompat.checkSelfPermission(this, "pleos.car.permission.FUSED_LOCATION") == PackageManager.PERMISSION_GRANTED
 
     private val askLocation = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        vehicle.start()
         if (hasLocationPermission()) location.start()
         else log("위치 권한이 없어요: ${granted.filterValues { !it }.keys.joinToString()} — 설정에서 허용해 주세요")
     }
@@ -149,7 +154,9 @@ class MainActivity : ComponentActivity() {
             log("지도 불러옴: 도로 ${m.links.size} · 현장 확인 불가 ${m.noStopZones.size} · 가능 ${m.okZones.size} · 도로 밖 ${m.parkingSpots.size}")
         }
 
-        if (hasLocationPermission()) location.start() else askLocation.launch(locationPermissions)
+        vehicle = VehicleLink(this, ::log) { speed, gear -> worker.execute { trip?.onVehicle(speed, gear) } }
+        val missing = locationPermissions.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (!missing) { location.start(); vehicle.start() } else askLocation.launch(locationPermissions)
         main.postDelayed(ticker, 1000)
 
         setContent {
@@ -174,7 +181,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         main.removeCallbacks(ticker)
-        location.stop(); navi.release(); voice.release(); riderLink.stop(); worker.shutdown()
+        location.stop(); vehicle.stop(); navi.release(); voice.release(); riderLink.stop(); worker.shutdown()
         super.onDestroy()
     }
 }
@@ -237,7 +244,9 @@ private fun Screen(
             val car = s?.car
             Text(
                 "차 위치 " + (car?.let { "%.5f, %.5f".format(it.lat, it.lon) } ?: "받는 중") +
-                    " · 시속 ${((s?.speedMps ?: 0.0) * 3.6).roundToInt()}km · 내비 $naviStatus",
+                    " · 시속 ${((s?.effSpeedMps ?: 0.0) * 3.6).roundToInt()}km" +
+                    (s?.vehicleSpeedMps?.let { " (차량 ${(it * 3.6).roundToInt()}km)" } ?: "") +
+                    (s?.gear?.let { " · 기어 $it" } ?: "") + " · 내비 $naviStatus",
                 fontSize = 13.sp, color = Color(0xFF6B7684),
             )
         }
@@ -296,6 +305,8 @@ private fun RiderCard(r: RiderInfo, url: String, s: TripState?) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val label = s?.rider?.label ?: "타는 사람"
             val (t, c) = when {
+                s?.phase == Phase.PICKED_UP -> "$label: 탑승 완료 ✓ · 1분 뒤 위치 기록 삭제" to MapColors.chosen
+                s?.phase == Phase.ARRIVED && r.joined -> "$label: 차가 도착했어요" to MapColors.chosen
                 r.walking -> "$label: 만남 장소로 걸어가는 중" to MapColors.chosen
                 r.joined -> "$label: 링크 열었음 ✓" to MapColors.chosen
                 else -> "${label}에게 링크를 보내 주세요" to Color(0xFFFFD166)
