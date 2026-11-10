@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>여기서 타요 · 링크 보내기</title>
+<!-- 운전자가 차 화면 QR을 자기 휴대폰으로 찍으면 열리는 화면: 타는 사람에게 링크를 카카오톡·문자로 보낸다.
+     이 화면은 여정에 아무것도 쓰지 않는다(운전자 휴대폰이 "타는 사람"으로 잡히지 않게). -->
+<style>
+  :root { --bg:#111418; --card:#1b2129; --line:#2a323d; --text:#f2f5f8; --sub:#9aa4b2; --dim:#6b7684; --green:#3dd68c; --green-bg:#14261d; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .brand { color: var(--sub); font-size: 14px; } .brand b { color: var(--text); font-size: 17px; }
+  .card { margin-top: 14px; padding: 20px 18px; border-radius: 16px; background: var(--card); }
+  h1 { margin: 0; font-size: 26px; line-height: 1.3; }
+  .sub { margin-top: 8px; color: var(--sub); font-size: 15px; line-height: 1.55; }
+  .preview { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: #262d37; color: var(--text); font-size: 15px; line-height: 1.5; white-space: pre-line; }
+  button, a.btn { display: block; width: 100%; margin-top: 12px; padding: 16px; border-radius: 14px; border: 0; font-size: 18px; font-weight: 800; text-align: center; text-decoration: none; }
+  .primary { background: var(--green); color: #0b1a12; }
+  .ghost { background: transparent; color: var(--text); border: 1px solid var(--line) !important; font-weight: 700; font-size: 16px; }
+  .small { background: transparent; color: var(--dim); font-size: 14px; font-weight: 600; padding: 10px; }
+  .done { display: none; margin-top: 14px; padding: 16px; border-radius: 14px; background: var(--green-bg); color: var(--green); font-weight: 800; font-size: 17px; line-height: 1.5; }
+  .done span { display: block; margin-top: 4px; color: var(--sub); font-weight: 500; font-size: 14px; }
+  .err { margin-top: 30px; padding: 20px; border-radius: 14px; background: var(--card); color: var(--sub); line-height: 1.6; }
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="brand"><b>여기서 타요</b></div>
+  <div class="card">
+    <h1 id="title">타는 사람에게 링크를 보내 주세요</h1>
+    <div class="sub">받은 사람은 앱 설치 없이 링크만 열면 만남 장소·걷는 길·나올 시간을 볼 수 있어요.</div>
+    <div class="preview" id="preview"></div>
+  </div>
+  <button class="primary" id="share">카카오톡·문자로 보내기</button>
+  <a class="btn ghost" id="sms" href="#">문자로 보내기</a>
+  <button class="ghost" id="copy">링크 복사</button>
+  <div class="done" id="done">보냈어요 ✓<span>휴대폰은 넣어 두고 출발하세요. 만남 장소는 차가 정해서 알려 드려요.</span></div>
+  <button class="small" id="self" style="display:none">시연: 이 휴대폰에서 타는 사람 화면 열기</button>
+</main>
+
+<script src="config.js"></script>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const tripId = q.get("t") || "";
+const DEMO = q.get("demo") === "1";
+const $ = (id) => document.getElementById(id);
+
+if (tripId.length < 16) {
+  $("app").innerHTML = '<div class="err"><b>링크가 올바르지 않아요.</b><br>차 화면의 QR을 다시 찍어 주세요.</div>';
+  throw new Error("no trip id");
+}
+
+// 타는 사람이 열 주소 (share.html → index.html)
+const riderUrl = `${location.origin}/?t=${encodeURIComponent(tripId)}${DEMO ? "&demo=1" : ""}`;
+let name = "";
+const message = () => `${name ? name + ", " : ""}지금 태우러 가요. 이 링크에서 만날 곳과 나올 시간을 알려 드릴게요.`;
+function paint() {
+  $("title").textContent = name ? `${name}에게 링크를 보내 주세요` : "타는 사람에게 링크를 보내 주세요";
+  $("preview").textContent = `${message()}\n${riderUrl}`;
+  $("sms").href = `sms:?&body=${encodeURIComponent(message() + " " + riderUrl)}`;
+}
+paint();
+function sent() { $("done").style.display = "block"; }
+
+// 공유 창이 없는 브라우저(PC 등)는 문자·복사만
+if (!navigator.share) $("share").style.display = "none";
+$("share").addEventListener("click", async () => {
+  try { await navigator.share({ title: "여기서 타요", text: message(), url: riderUrl }); sent(); }
+  catch (e) { /* 사용자가 공유 창을 닫음 */ }
+});
+$("sms").addEventListener("click", () => setTimeout(sent, 800));
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(`${message()} ${riderUrl}`); $("copy").textContent = "복사했어요 ✓ 카카오톡에 붙여 넣어 주세요"; }
+  catch (e) { $("copy").textContent = "복사가 안 돼요 — 위 글을 길게 눌러 복사해 주세요"; }
+});
+if (DEMO) { $("self").style.display = "block"; $("self").addEventListener("click", () => { location.href = riderUrl; }); }
+
+// 타는 사람 이름만 읽어 온다 (쓰지 않음)
+try {
+  const CFG = window.YT_CONFIG || {};
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+  const { getDatabase, ref, get } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js");
+  const info = (await get(ref(getDatabase(initializeApp(CFG.firebase)), `trips/${tripId}/info`))).val();
+  if (info?.ended) { $("app").innerHTML = '<div class="err"><b>이미 끝난 만남이에요.</b><br>차 화면에서 새 QR을 찍어 주세요.</div>'; }
+  else if (info?.riderLabel) { name = info.riderLabel; paint(); }
+} catch (e) { /* 이름 없이도 보낼 수 있음 */ }
+</script>
+</body>
+</html>

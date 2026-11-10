@@ -143,7 +143,7 @@ class MainActivity : ComponentActivity() {
             onWalks = { walks -> worker.execute { trip?.refine(walks) } },
             onLandmark = { at, name -> main.post { landmark = at to name } },
         ).also { it.start(Demo.RIDER.label, Demo.DESTINATION.label) }
-        val riderUrl = riderLink.link(Demo.WEB_HOST, Demo.DEMO_LINK)
+        val riderUrl = riderLink.shareLink(Demo.WEB_HOST, Demo.DEMO_LINK)
 
         worker.execute {
             val m = RoadMap.parse(assets.open(Demo.MAP_ASSET).bufferedReader().use { it.readText() })
@@ -293,7 +293,7 @@ private fun PhaseCard(s: TripState?) {
     }
 }
 
-/** 타는 사람 링크: QR(휴대폰으로 찍기) + 참여 상태 */
+/** 타는 사람 링크: QR(운전자 휴대폰으로 찍어 공유 화면 열기) + 참여 상태 */
 @Composable
 private fun RiderCard(r: RiderInfo, url: String, s: TripState?) {
     val qr = remember(url) { qrBitmap(url, 360) }
@@ -314,7 +314,7 @@ private fun RiderCard(r: RiderInfo, url: String, s: TripState?) {
             Text(t, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c)
             if (r.joined && r.needs.isNotEmpty())
                 Text("사정: " + needLabels.filter { it.first in r.needs }.joinToString { it.second }, fontSize = 15.sp, color = Color.White)
-            if (!r.joined) Text("휴대폰 카메라로 QR을 찍으면 앱 설치 없이 열려요", fontSize = 14.sp, color = Color(0xFF9AA4B2))
+            if (!r.joined) Text("내 휴대폰으로 QR을 찍어 ${label}에게 카카오톡·문자로 보내 주세요 · 받는 사람은 앱 설치 없이 열어요", fontSize = 14.sp, color = Color(0xFF9AA4B2))
             if (r.demo) Text("시연 모드 · 위치 고정", fontSize = 13.sp, color = Color(0xFF6B7684))
             Text(url.removePrefix("https://"), fontSize = 12.sp, color = Color(0xFF6B7684))
         }

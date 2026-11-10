@@ -66,6 +66,8 @@ class RiderLink(
     private var lastCarAt = 0L
 
     fun link(host: String, demo: Boolean) = "https://$host/?t=$tripId" + if (demo) "&demo=1" else ""
+    /** 차 화면 QR: 운전자가 자기 휴대폰으로 찍어 타는 사람에게 카카오톡·문자로 보내는 화면 (여정에 아무것도 쓰지 않음) */
+    fun shareLink(host: String, demo: Boolean) = "https://$host/share.html?t=$tripId" + if (demo) "&demo=1" else ""
 
     fun start(riderLabel: String, destinationLabel: String?) {
         io.execute {
