@@ -53,6 +53,7 @@ dependencies {
     implementation("ai.pleos.playground:FusedLocation:1.1.3")
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")
     implementation("ai.pleos.playground:Vehicle:2.3.2")
+    implementation("com.google.zxing:core:3.5.3")   // 타는 사람 링크 QR 코드
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

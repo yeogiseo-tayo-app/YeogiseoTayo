@@ -8,6 +8,7 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -32,12 +34,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,14 +51,16 @@ import androidx.core.content.ContextCompat
 import com.hmgapp.yeogiseotayo.engine.Candidate
 import com.hmgapp.yeogiseotayo.engine.CandidateKind
 import com.hmgapp.yeogiseotayo.engine.FieldStatus
+import com.hmgapp.yeogiseotayo.engine.Geo
 import com.hmgapp.yeogiseotayo.engine.LatLng
 import com.hmgapp.yeogiseotayo.engine.Need
 import com.hmgapp.yeogiseotayo.engine.RoadMap
 import com.hmgapp.yeogiseotayo.location.CarLocation
 import com.hmgapp.yeogiseotayo.navi.NaviLink
+import com.hmgapp.yeogiseotayo.rider.RiderInfo
+import com.hmgapp.yeogiseotayo.rider.RiderLink
 import com.hmgapp.yeogiseotayo.trip.Phase
 import com.hmgapp.yeogiseotayo.trip.Place
-import com.hmgapp.yeogiseotayo.trip.RiderPort
 import com.hmgapp.yeogiseotayo.trip.TripController
 import com.hmgapp.yeogiseotayo.trip.TripState
 import com.hmgapp.yeogiseotayo.ui.MapCanvas
@@ -65,9 +72,13 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
-/** 시연 설정 (노량진역). 타는 사람 위치는 11/8 웹 링크가 생기면 링크에서 받는다 */
+/** 시연 설정 (노량진역). 타는 사람 위치는 웹 링크에서 받는다 (시연 링크는 이 위치로 고정) */
 object Demo {
     val RIDER = Place("엄마", LatLng(37.51385, 126.94255))
+    const val FIREBASE_DB = "https://yeogiseo-tayo-default-rtdb.asia-southeast1.firebasedatabase.app"
+    const val WEB_HOST = "yeogiseo-tayo.web.app"
+    /** true 면 링크에 &demo=1 → 타는 사람 위치를 RIDER 로 고정 (실제 GPS 대신) */
+    const val DEMO_LINK = true
     val DESTINATION = Place("장승배기역", LatLng(37.50484, 126.93918))
     const val MAP_ASSET = "map_noryangjin.txt"
 }
@@ -81,20 +92,24 @@ class MainActivity : ComponentActivity() {
     private var state by mutableStateOf<TripState?>(null)
     private var roadMap by mutableStateOf<RoadMap?>(null)
     private var naviStatus by mutableStateOf("연결 중")
+    private var riderInfo by mutableStateOf(RiderInfo())
+    private var landmark by mutableStateOf<Pair<LatLng, String>?>(null)
     private val logs = mutableStateListOf<String>()
 
     private lateinit var navi: NaviLink
     private lateinit var voice: VoiceLink
     private lateinit var location: CarLocation
     private var trip: TripController? = null
+    private lateinit var riderLink: RiderLink
 
     private fun log(msg: String) { main.post { logs.add("${fmt.format(Date())}  $msg"); if (logs.size > 60) logs.removeAt(0) } }
 
-    /** 11/8 웹 링크 전까지는 타는 사람에게 갈 알림을 화면 기록으로 보여 준다 */
-    private val riderPort = object : RiderPort {
-        override fun meetingPlaceChanged(c: Candidate, message: String) = log("→ 타는 사람: \"${c.placeName}에서 기다려 주세요\"")
-        override fun comeOutNow(c: Candidate) = log("→ 타는 사람: \"지금 나오세요\"")
-        override fun carArrived(c: Candidate) = log("→ 타는 사람: \"차가 도착했어요\"")
+    /** 타는 사람 웹 화면에서 온 값 → 여정에 반영 (작업 스레드) */
+    private fun applyRider(info: RiderInfo) {
+        val t = trip ?: return
+        info.pos?.let { p -> if (Geo.dist(p, t.state.rider.pos) > 25) t.setRider(Place(t.state.rider.label, p)) }
+        if (!t.state.riderWalking && info.needs != t.state.needs) t.setNeeds(info.needs)
+        if (info.walking) t.riderStartedWalking()
     }
 
     /** FusedLocation 권한은 위험 권한(dangerous) → 매니페스트 + 실행 중 요청 둘 다 필요 (11/9 확인) */
@@ -118,11 +133,17 @@ class MainActivity : ComponentActivity() {
         }
         voice = VoiceLink(this, ::log).also { it.connect() }
         location = CarLocation(this, ::log) { pos, heading, t -> worker.execute { trip?.onLocation(pos, heading, t) } }
+        riderLink = RiderLink(Demo.FIREBASE_DB, BuildConfig.TMAP_APP_KEY, BuildConfig.KAKAO_REST_KEY, ::log,
+            onRider = { info -> main.post { riderInfo = info }; worker.execute { applyRider(info) } },
+            onWalks = { walks -> worker.execute { trip?.refine(walks) } },
+            onLandmark = { at, name -> main.post { landmark = at to name } },
+        ).also { it.start(Demo.RIDER.label, Demo.DESTINATION.label) }
+        val riderUrl = riderLink.link(Demo.WEB_HOST, Demo.DEMO_LINK)
 
         worker.execute {
             val m = RoadMap.parse(assets.open(Demo.MAP_ASSET).bufferedReader().use { it.readText() })
-            val tc = TripController(m, navi, voice, riderPort, Demo.RIDER, Demo.DESTINATION,
-                onState = { s -> main.post { state = s; naviStatus = navi.status } })
+            val tc = TripController(m, navi, voice, riderLink, Demo.RIDER, Demo.DESTINATION,
+                onState = { s -> riderLink.publish(s); main.post { state = s; naviStatus = navi.status } })
             trip = tc
             main.post { roadMap = m; state = tc.state }
             log("지도 불러옴: 도로 ${m.links.size} · 현장 확인 불가 ${m.noStopZones.size} · 가능 ${m.okZones.size} · 도로 밖 ${m.parkingSpots.size}")
@@ -135,8 +156,9 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Screen(
                     s = state, map = roadMap, naviStatus = naviStatus, logs = logs,
+                    rider = riderInfo, riderUrl = riderUrl, landmark = landmark,
                     onDecide = { worker.execute { trip?.decide() } },
-                    onReset = { worker.execute { trip?.reset() } },
+                    onReset = { worker.execute { trip?.reset(); riderLink.resetTrip() } },
                     onNeed = { n -> worker.execute { trip?.let { t -> t.setNeeds(if (n in t.state.needs) t.state.needs - n else t.state.needs + n) } } },
                     onDemoDestination = { navi.setDestination(Demo.DESTINATION.label, Demo.DESTINATION.pos) },
                     onDemoRiderWalks = { worker.execute { trip?.riderStartedWalking() } },
@@ -152,7 +174,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         main.removeCallbacks(ticker)
-        location.stop(); navi.release(); voice.release(); worker.shutdown()
+        location.stop(); navi.release(); voice.release(); riderLink.stop(); worker.shutdown()
         super.onDestroy()
     }
 }
@@ -171,6 +193,7 @@ private fun fmtSec(sec: Double?): String {
 @Composable
 private fun Screen(
     s: TripState?, map: RoadMap?, naviStatus: String, logs: List<String>,
+    rider: RiderInfo, riderUrl: String, landmark: Pair<LatLng, String>?,
     onDecide: () -> Unit, onReset: () -> Unit, onNeed: (Need) -> Unit,
     onDemoDestination: () -> Unit, onDemoRiderWalks: () -> Unit,
 ) {
@@ -183,11 +206,12 @@ private fun Screen(
             Text("가족·지인을 태우러 갈 때, 막히지 않는 딱 한 곳", fontSize = 16.sp, color = Color(0xFF9AA4B2))
 
             PhaseCard(s)
-            s?.chosen?.let { ResultCard(it, s) }
+            s?.chosen?.let { c -> ResultCard(c, s, landmark?.takeIf { Geo.dist(it.first, c.curb) < 1.0 }?.second) }
+            if (s == null || !s.moving) RiderCard(rider, riderUrl, s)
 
             if (s == null || !s.moving) {
-                Text("타는 사람 사정 (시연용 — 나중엔 타는 사람 화면에서 누름)", fontSize = 14.sp, color = Color(0xFF9AA4B2))
-                needLabels.chunked(2).forEach { pair ->
+                if (!rider.joined) Text("타는 사람 사정 (링크를 열기 전 시연용)", fontSize = 14.sp, color = Color(0xFF9AA4B2))
+                if (!rider.joined) needLabels.chunked(2).forEach { pair ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         pair.forEach { (n, label) ->
                             FilterChip(selected = s?.needs?.contains(n) == true, onClick = { onNeed(n) },
@@ -260,14 +284,50 @@ private fun PhaseCard(s: TripState?) {
     }
 }
 
+/** 타는 사람 링크: QR(휴대폰으로 찍기) + 참여 상태 */
 @Composable
-private fun ResultCard(c: Candidate, s: TripState) {
+private fun RiderCard(r: RiderInfo, url: String, s: TripState?) {
+    val qr = remember(url) { qrBitmap(url, 360) }
+    Row(
+        Modifier.fillMaxWidth().background(Color(0xFF1B2129), RoundedCornerShape(14.dp)).padding(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!r.joined || s?.phase == Phase.READY) Image(qr, "타는 사람 링크 QR", Modifier.size(120.dp).background(Color.White).padding(6.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val label = s?.rider?.label ?: "타는 사람"
+            val (t, c) = when {
+                r.walking -> "$label: 만남 장소로 걸어가는 중" to MapColors.chosen
+                r.joined -> "$label: 링크 열었음 ✓" to MapColors.chosen
+                else -> "${label}에게 링크를 보내 주세요" to Color(0xFFFFD166)
+            }
+            Text(t, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = c)
+            if (r.joined && r.needs.isNotEmpty())
+                Text("사정: " + needLabels.filter { it.first in r.needs }.joinToString { it.second }, fontSize = 15.sp, color = Color.White)
+            if (!r.joined) Text("휴대폰 카메라로 QR을 찍으면 앱 설치 없이 열려요", fontSize = 14.sp, color = Color(0xFF9AA4B2))
+            if (r.demo) Text("시연 모드 · 위치 고정", fontSize = 13.sp, color = Color(0xFF6B7684))
+            Text(url.removePrefix("https://"), fontSize = 12.sp, color = Color(0xFF6B7684))
+        }
+    }
+}
+
+private fun qrBitmap(text: String, size: Int): ImageBitmap {
+    val m = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size,
+        mapOf(com.google.zxing.EncodeHintType.MARGIN to 0))
+    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.RGB_565)
+    for (y in 0 until size) for (x in 0 until size)
+        bmp.setPixel(x, y, if (m[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+    return bmp.asImageBitmap()
+}
+
+@Composable
+private fun ResultCard(c: Candidate, s: TripState, landmark: String?) {
     Column(Modifier.fillMaxWidth().background(Color(0xFF14261D), RoundedCornerShape(14.dp)).padding(16.dp)) {
         Text(c.placeName, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = MapColors.chosen)
-        Text(if (c.kind == CandidateKind.OFF_ROAD) "도로 밖에서 태워요 · 길을 막지 않음" else "진행 방향 오른쪽 길가",
+        Text(if (c.kind == CandidateKind.OFF_ROAD) "도로 밖에서 태워요 · 길을 막지 않음"
+            else "진행 방향 오른쪽 길가" + (landmark?.let { " · $it 앞" } ?: ""),
             fontSize = 16.sp, color = Color(0xFFCDE9D9))
         Spacer(Modifier.height(8.dp))
-        Text("걷기 ${fmtSec(c.walkSec)}" + (if (c.crossings.isNotEmpty()) " · ${c.crossings.joinToString()} 건넘" else " · 길 건너지 않음"),
+        Text("걷기 ${fmtSec(s.realWalkSec ?: c.walkSec)}" + (if (s.realWalkSec != null) " (TMAP)" else "") + (if (c.crossings.isNotEmpty()) " · ${c.crossings.joinToString()} 건넘" else " · 길 건너지 않음"),
             fontSize = 16.sp, color = Color.White)
         Text("차가 더 가는 시간 ${fmtSec(c.carExtraSec)} · 정차 위험 ${c.stopPenaltySec.roundToInt()}", fontSize = 16.sp, color = Color.White)
         Text(if (c.field == FieldStatus.VERIFIED_OK) "✔ ${c.fieldNote}" else "현장 미확인 (공공데이터로만 판단)",

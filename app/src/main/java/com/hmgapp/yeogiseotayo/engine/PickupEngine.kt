@@ -7,7 +7,7 @@ enum class Need { RAIN, LUGGAGE, HARD_TO_WALK, NOT_READY }
 
 data class PickupRequest(
     val car: LatLng,
-    val carHeadingDeg: Double,
+    val carHeadingDeg: Double?,   // 모르면 null (가장 가까운 도로)
     val rider: LatLng,
     /** 원래 목적지(집 등). 있으면 "돌아가는 시간"까지 계산 */
     val destination: LatLng? = null,
@@ -97,6 +97,17 @@ data class PickupResult(
  * 만남 장소 한 점을 고르는 판단 엔진. 안드로이드에 의존하지 않는 순수 계산.
  * 점수 = 걷는 시간×가중 + 길 건너기×가중 + 차가 더 가는 시간 + 정차 위험 벌점 (낮을수록 좋음)
  */
+/** 사정에 따른 걸음 속도 배율 (엔진과 TMAP 재확인이 같은 값을 쓰도록 한곳에) */
+fun walkSpeedFactor(needs: Set<Need>): Double = when {
+    Need.HARD_TO_WALK in needs -> 0.7
+    Need.LUGGAGE in needs || Need.RAIN in needs -> 0.9
+    else -> 1.0
+}
+
+/** 사정에 따른 걷기 가중치 */
+fun walkWeight(needs: Set<Need>): Double =
+    (if (Need.RAIN in needs) 1.4 else 1.0) * (if (Need.LUGGAGE in needs) 1.3 else 1.0) * (if (Need.HARD_TO_WALK in needs) 2.0 else 1.0)
+
 class PickupEngine(private val map: RoadMap, private val cfg: EngineConfig = EngineConfig()) {
 
     private val router = Router(map)
@@ -131,7 +142,7 @@ class PickupEngine(private val map: RoadMap, private val cfg: EngineConfig = Eng
         }
         val msg = when {
             best == null -> "걸어서 ${Candidate.fmt(cfg.maxWalkSec)} 안에 합법적으로 설 수 있는 길가가 없어요"
-            relaxed -> "가까운 길가는 모두 정차 금지예요. 가장 가까운 곳은 걸어서 ${Candidate.fmt(best.walkSec)}이에요"
+            relaxed -> "가까운 길가는 모두 정차 금지예요. 가장 가까운 곳은 걸어서 ${Josa.ieyo(Candidate.fmt(best.walkSec))}"
             best.kind == CandidateKind.OFF_ROAD -> "${best.placeName} · 걷기 ${Candidate.fmt(best.walkSec)}"
             else -> "${best.placeName} 길가 · 걷기 ${Candidate.fmt(best.walkSec)}"
         }
@@ -145,12 +156,8 @@ class PickupEngine(private val map: RoadMap, private val cfg: EngineConfig = Eng
     ): Pair<ArrayList<Candidate>, Int> {
         fun reject(why: String) { rejected[why] = (rejected[why] ?: 0) + 1 }
         val hard = Need.HARD_TO_WALK in req.needs
-        val walkSpeed = cfg.walkSpeedMps * when {
-            hard -> 0.7
-            Need.LUGGAGE in req.needs || Need.RAIN in req.needs -> 0.9
-            else -> 1.0
-        }
-        val wWalk = 1.0 * (if (Need.RAIN in req.needs) 1.4 else 1.0) * (if (Need.LUGGAGE in req.needs) 1.3 else 1.0) * (if (hard) 2.0 else 1.0)
+        val walkSpeed = cfg.walkSpeedMps * walkSpeedFactor(req.needs)
+        val wWalk = walkWeight(req.needs)
         val wCross = (if (Need.LUGGAGE in req.needs) 1.5 else 1.0) * (if (hard) 2.0 else 1.0)
         val wStop = if (Need.NOT_READY in req.needs) 1.5 else 1.0
         val searchRadius = maxWalk * walkSpeed / cfg.walkDetour

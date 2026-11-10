@@ -5,6 +5,7 @@
   C|lat|lon|lanes|signal(Y/N)
   B|id|lat|lon|name
   X|lat1|lon1|lat2|lon2|reason|checkedOn   (tools/field_checks.txt 현장 확인 정차 불가 구간)
+  O|… 정차 가능 구간,  P|이름|입구위도|입구경도|타는곳위도|타는곳경도|메모|날짜|Y/N  도로 밖 타는 곳
 사용: python3 build_map_asset.py <작업폴더> <원본 다운로드 폴더> <중심위도> <중심경도> <반경m> <출력.txt>
 """
 import csv, io, json, math, sys
@@ -44,6 +45,6 @@ for x in bs:
 import os
 fc = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'field_checks.txt')
 if os.path.exists(fc):
-    lines += [l.rstrip('\n') for l in open(fc, encoding='utf-8') if l.startswith('X|')]
+    lines += [l.rstrip('\n') for l in open(fc, encoding='utf-8') if l[:2] in ('X|', 'O|', 'P|')]
 open(outp, 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
 print('nodes/links/crosswalks/busstops', sum(l[0] == 'N' for l in lines), sum(l[0] == 'L' for l in lines), nc, nb)

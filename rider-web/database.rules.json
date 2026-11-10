@@ -1,0 +1,12 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "trips": {
+      "$tripId": {
+        ".read": "$tripId.length >= 16",
+        ".write": "$tripId.length >= 16"
+      }
+    }
+  }
+}

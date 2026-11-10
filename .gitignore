@@ -15,3 +15,7 @@
 local.properties
 
 /.idea/
+
+# 타는 사람 웹 실제 키 (예시는 rider-web/public/config.example.js)
+rider-web/public/config.js
+rider-web/.firebase/
