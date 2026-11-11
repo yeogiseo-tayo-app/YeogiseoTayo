@@ -19,3 +19,6 @@ local.properties
 # 타는 사람 웹 실제 키 (예시는 rider-web/public/config.example.js)
 rider-web/public/config.js
 rider-web/.firebase/
+
+# Android Studio 서명 빌드 출력 (심사용 APK 는 apk/ 폴더에 따로 둠)
+/app/release/
