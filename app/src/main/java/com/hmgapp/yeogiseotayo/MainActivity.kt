@@ -344,7 +344,7 @@ private fun ResultCard(c: Candidate, s: TripState, landmark: String?) {
         Text(if (c.field == FieldStatus.VERIFIED_OK) "✔ ${c.fieldNote}" else "현장 미확인 (공공데이터로만 판단)",
             fontSize = 15.sp, color = if (c.field == FieldStatus.VERIFIED_OK) MapColors.chosen else Color(0xFFFFB86B))
         s.result?.let { r ->
-            if (r.relaxedWalk) Text(r.message, fontSize = 15.sp, color = Color(0xFFFFD166))
+            if (r.relaxedWalk) Text("가까운 길가는 모두 정차 금지예요. 이곳이 가장 가까운 합법 장소예요.", fontSize = 15.sp, color = Color(0xFFFFD166))
             val top = r.rejected.entries.sortedByDescending { it.value }.take(3).joinToString { "${it.key} ${it.value}" }
             if (top.isNotBlank()) Text("뺀 곳: $top", fontSize = 13.sp, color = Color(0xFF8B95A3))
         }
